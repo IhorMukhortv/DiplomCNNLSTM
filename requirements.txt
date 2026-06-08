@@ -1,0 +1,12 @@
+pandas
+numpy
+matplotlib
+seaborn
+h5py
+scipy
+pytest
+pytest-asyncio
+httpx
+pydantic
+pydantic-settings
+tensorflow
