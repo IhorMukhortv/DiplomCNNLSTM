@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from httpx import ASGITransport, AsyncClient
@@ -12,7 +12,11 @@ from app.infrastructure.db.models import PVTelemetry
 @pytest.fixture
 def mock_db():
     """Фікстура для створення моку сесії бази даних."""
-    return AsyncMock()
+    db = AsyncMock()
+    # add є синхронним методом в SQLAlchemy Session, тому використовуємо MagicMock
+    db.add = MagicMock()
+    return db
+
 
 
 @pytest.fixture
@@ -131,3 +135,76 @@ async def test_predict_success(client, mock_db):
     
     # Потужність не може бути від'ємною
     assert data["predicted_active_power_kw"] >= 0.0
+
+
+@pytest.mark.anyio
+async def test_retrain_endpoint_insufficient(client, mock_db):
+    """Перевіряє, що роут донавчання повертає помилку 400 при недостатній кількості записів у БД."""
+    # Повертаємо 5 записів замість 25 необхідних
+    mock_records = [
+        PVTelemetry(
+            timestamp=datetime(2026, 6, 8, i, 0, 0),
+            temperature_2m=20.0,
+            relative_humidity_2m=50.0,
+            cloud_cover=10.0,
+            direct_normal_irradiance=500.0,
+            diffuse_horizontal_irradiance=100.0,
+            global_horizontal_irradiance=600.0,
+            active_power_kw=15.0
+        )
+        for i in range(5)
+    ]
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = mock_records
+    mock_db.execute = AsyncMock(return_value=mock_execute_result)
+    
+    response = await client.post("/api/v1/predict/retrain", json={"limit_hours": 30, "epochs": 2})
+    assert response.status_code == 400
+    data = response.json()
+    assert "Недостатньо даних" in data["detail"]
+
+
+@pytest.mark.anyio
+async def test_retrain_endpoint_success(client, mock_db, monkeypatch, tmp_path):
+    """Перевіряє успішне виконання донавчання через API роут."""
+    # Тимчасовий реєстр моделей, щоб не зіпсувати основний saved_model.keras
+    temp_model_path = tmp_path / "temp_saved_model.keras"
+    from app.infrastructure.storage.model_registry import model_registry
+    monkeypatch.setattr(model_registry, "model_path", str(temp_model_path))
+    monkeypatch.setattr(model_registry, "_model", None)
+
+    # 30 записів для успіху
+    mock_records = [
+        PVTelemetry(
+            timestamp=datetime(2026, 6, 8, 0, 0, 0) + timedelta(hours=i),
+            temperature_2m=20.0,
+            relative_humidity_2m=50.0,
+            cloud_cover=10.0,
+            direct_normal_irradiance=500.0,
+            diffuse_horizontal_irradiance=100.0,
+            global_horizontal_irradiance=600.0,
+            active_power_kw=15.0
+        )
+        for i in range(30)
+    ]
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = mock_records
+    mock_db.execute = AsyncMock(return_value=mock_execute_result)
+    
+    payload = {
+        "limit_hours": 30,
+        "epochs": 2,
+        "learning_rate": 0.0001,
+        "batch_size": 10
+    }
+    
+    response = await client.post("/api/v1/predict/retrain", json=payload)
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["records_used"] == 30
+    assert "loss_before" in data
+    assert "loss_after" in data
+    assert len(data["loss_history"]) == 2
+

@@ -1,10 +1,18 @@
+import os
 import numpy as np
 import pandas as pd
 import pytest
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 from app.core.data.dataset import CustomMinMaxScaler, load_and_split_data, TimeSeriesWindowGenerator
 from app.core.models.cnn_lstm import build_cnn_lstm_model
 from app.core.models.metrics import calculate_mae, calculate_rmse, calculate_mape, evaluate_forecast
 from app.core.exceptions import DataPreprocessingError
+from app.infrastructure.storage.model_registry import ModelRegistry
+from app.core.models.online_learning import retrain_on_recent_data
+from app.infrastructure.db.models import PVTelemetry
+
+
 
 
 def test_custom_min_max_scaler():
@@ -131,3 +139,97 @@ def test_metrics_calculation():
     assert "mae" in metrics
     assert "rmse" in metrics
     assert "mape" in metrics
+
+
+def test_model_registry(tmp_path):
+    """Тестує працездатність реєстру моделей."""
+    model_file = tmp_path / "test_model.keras"
+    # Створюємо реєстр моделей з тестовим шляхом
+    registry = ModelRegistry(model_path=str(model_file))
+    
+    # 1. Перше завантаження (створення нової моделі, оскільки файлу немає)
+    model = registry.get_model()
+    assert model is not None
+    
+    # 2. Збереження моделі
+    registry.save_model(model)
+    assert model_file.exists()
+    
+    # 3. Перезавантаження моделі
+    reloaded_model = registry.reload_model()
+    assert reloaded_model is not None
+
+
+@pytest.mark.anyio
+async def test_retrain_on_recent_data_insufficient():
+    """Тестує помилку при спробі донавчання на недостатній кількості даних."""
+    mock_db = AsyncMock()
+    mock_execute_result = MagicMock()
+    # Повертаємо менше 25 записів (наприклад, 10)
+    mock_execute_result.scalars.return_value.all.return_value = [
+        MagicMock() for _ in range(10)
+    ]
+    mock_db.execute.return_value = mock_execute_result
+    
+    with pytest.raises(ValueError) as excinfo:
+        await retrain_on_recent_data(mock_db, limit_hours=10)
+    
+    assert "Недостатньо даних" in str(excinfo.value)
+
+
+@pytest.mark.anyio
+async def test_retrain_on_recent_data_success(monkeypatch, tmp_path):
+    """Тестує успішний запуск донавчання при достатній кількості даних."""
+    mock_db = AsyncMock()
+    mock_execute_result = MagicMock()
+    
+    # Тимчасовий шлях для моделі у глобальному реєстрі, щоб не пошкодити основну
+    temp_model_path = tmp_path / "temp_saved_model.keras"
+    from app.infrastructure.storage.model_registry import model_registry
+    monkeypatch.setattr(model_registry, "model_path", str(temp_model_path))
+    # Оновлюємо шляхи слотів мультимасштабного реєстру
+    monkeypatch.setattr(model_registry, "_slot_paths", {
+        "base": str(temp_model_path),
+        "year": str(tmp_path / "saved_model_year.keras"),
+        "month": str(tmp_path / "saved_model_month.keras"),
+    })
+    # Скидаємо модель в реєстрі, щоб вона ініціалізувалась наново за новим шляхом
+    monkeypatch.setattr(model_registry, "_models", {"base": None, "year": None, "month": None})
+    monkeypatch.setattr(model_registry, "_model", None)
+
+    # Створюємо 30 фейкових записів телеметрії
+    records = [
+        PVTelemetry(
+            timestamp=datetime(2026, 6, 8, 0, 0, 0) + timedelta(hours=i),
+            temperature_2m=25.0,
+            relative_humidity_2m=50.0,
+            cloud_cover=20.0,
+            direct_normal_irradiance=700.0,
+            diffuse_horizontal_irradiance=100.0,
+            global_horizontal_irradiance=800.0,
+            active_power_kw=15.0
+        )
+        for i in range(30)
+    ]
+    
+    mock_execute_result.scalars.return_value.all.return_value = records
+    mock_db.execute.return_value = mock_execute_result
+    
+    # Викликаємо функцію донавчання на 2 епохи
+    results = await retrain_on_recent_data(
+        db=mock_db,
+        limit_hours=30,
+        epochs=2,
+        learning_rate=0.0001,
+        batch_size=10
+    )
+    
+    assert results["status"] == "success"
+    assert results["records_used"] == 30
+    assert results["windows_generated"] == 30 - 24 - 1 + 1 # 6
+    assert results["loss_before"] is not None
+    assert results["loss_after"] is not None
+    assert len(results["loss_history"]) == 2
+    assert results["slot"] == "month"
+    assert os.path.exists(model_registry._slot_paths["month"])
+

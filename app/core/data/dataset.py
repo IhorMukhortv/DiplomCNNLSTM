@@ -142,3 +142,37 @@ class TimeSeriesWindowGenerator:
             y_list.append(target[i + self.lookback : i + self.lookback + self.horizon])
 
         return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.float32)
+
+
+def get_default_scaler() -> CustomMinMaxScaler:
+    """Завантажує та навчає масштабувальник на навчальних даних або дефолтних фізичних межах."""
+    scaler = CustomMinMaxScaler()
+    csv_path = os.path.join("data", "raw", "pv_weather_data.csv")
+    
+    if os.path.exists(csv_path):
+        try:
+            train_df, _, _ = load_and_split_data(csv_path)
+            scaler.fit(train_df)
+            logger.info("Масштабувальник успішно навчено на історичному датасеті.")
+            return scaler
+        except Exception as e:
+            logger.warning(f"Не вдалося навчити масштабувальник на CSV: {e}. Перехід до дефолтного.")
+            
+    # Запасний варіант з фізичними межами
+    dummy_df = pd.DataFrame({
+        "temperature_2m": [-10.0, 45.0],
+        "relative_humidity_2m": [0.0, 100.0],
+        "cloud_cover": [0.0, 100.0],
+        "direct_normal_irradiance": [0.0, 1100.0],
+        "diffuse_horizontal_irradiance": [0.0, 600.0],
+        "global_horizontal_irradiance": [0.0, 1200.0],
+        "active_power_kw": [0.0, 30.0]
+    })
+    scaler.fit(dummy_df)
+    logger.info("Масштабувальник ініціалізовано дефолтними фізичними межами.")
+    return scaler
+
+
+# Глобальний екземпляр масштабувальника для всієї системи
+global_scaler = get_default_scaler()
+
