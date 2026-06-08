@@ -10,3 +10,9 @@ httpx
 pydantic
 pydantic-settings
 tensorflow
+fastapi
+uvicorn
+SQLAlchemy>=2.0
+asyncpg
+greenlet
+

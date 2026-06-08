@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     STATION_LONGITUDE: float = -122.1697
     STATION_CAPACITY_KW: float = 30.0
 
+    # Налаштування бази даних
+    DATABASE_URL: str = "postgresql+asyncpg://pv_user:pv_password@localhost:5432/pv_db"
+
+
 
 # Створення синглтону налаштувань
 settings = Settings()
