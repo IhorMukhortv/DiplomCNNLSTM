@@ -233,3 +233,34 @@ async def test_retrain_on_recent_data_success(monkeypatch, tmp_path):
     assert results["slot"] == "month"
     assert os.path.exists(model_registry._slot_paths["month"])
 
+
+def test_model_registry_load_model_file_exception(tmp_path, monkeypatch):
+    """Тестує обробку виключення при завантаженні файлу моделі."""
+    from app.infrastructure.storage.model_registry import ModelRegistry
+    import tensorflow as tf
+
+    registry = ModelRegistry(model_path=str(tmp_path / "dummy.keras"))
+
+    # Мокаємо tf.keras.models.load_model щоб він кидав Exception
+    def mock_load_model(*args, **kwargs):
+        raise Exception("Mocked load error")
+
+    monkeypatch.setattr(tf.keras.models, "load_model", mock_load_model)
+
+    # Мокаємо logger.error
+    mock_logger = MagicMock()
+    monkeypatch.setattr("app.infrastructure.storage.model_registry.logger", mock_logger)
+
+    # Викликаємо приватний метод
+    result = registry._load_model_file("fake_path.keras", "test_label")
+
+    # Перевіряємо, що повернувся None
+    assert result is None
+
+    # Перевіряємо, що логер був викликаний з правильною помилкою
+    mock_logger.error.assert_called_once()
+    log_msg = mock_logger.error.call_args[0][0]
+    assert "Помилка при завантаженні моделі" in log_msg or "Не вдалося завантажити" in log_msg
+    assert "test_label" in log_msg
+    assert "fake_path.keras" in log_msg
+    assert "Mocked load error" in log_msg
