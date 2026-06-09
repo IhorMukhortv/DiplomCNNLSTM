@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from typing import Optional
 import pandas as pd
 from app.core.config import settings
@@ -49,12 +50,15 @@ class DataPipeline:
         await self.dataset_loader.download_all(years_to_load)
 
         # Зчитування та об'єднання даних генерації
-        pv_dfs = []
-        for year in years_to_load:
-            df_year = self.dataset_loader.load_year_data(year)
-            pv_dfs.append(df_year)
+        # Offloading blocking I/O to separate threads and running concurrently
+        tasks = [
+            asyncio.to_thread(self.dataset_loader.load_year_data, year)
+            for year in years_to_load
+        ]
+        pv_dfs = await asyncio.gather(*tasks)
 
-        pv_df = pd.concat(pv_dfs, ignore_index=True)
+        # Concatenation is also blocking, run it in a thread
+        pv_df = await asyncio.to_thread(pd.concat, pv_dfs, ignore_index=True)
         logger.info(f"Загалом зчитано {len(pv_df)} похвилинних записів сонячної генерації.")
 
         # 2. Адаптація часового поясу та агрегація даних генерації до годинного інтервалу
