@@ -221,6 +221,32 @@ def convert_sqrt(s):
         s = s[:idx] + replacement + s[end+1:]
     return s
 
+def create_omml_equation(formula_clean):
+    from docx.oxml import parse_xml
+    # simple xml escaping
+    escaped_formula = formula_clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    omml_xml = f'''<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <m:oMath>
+        <m:r>
+          <w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>
+          <m:t>{escaped_formula}</m:t>
+        </m:r>
+      </m:oMath>
+    </m:oMathPara>'''
+    return parse_xml(omml_xml)
+
+def create_omml_inline(formula_clean):
+    from docx.oxml import parse_xml
+    # simple xml escaping
+    escaped_formula = formula_clean.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    omml_xml = f'''<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+      <m:r>
+        <w:rPr><w:rFonts w:ascii="Cambria Math" w:hAnsi="Cambria Math"/></w:rPr>
+        <m:t>{escaped_formula}</m:t>
+      </m:r>
+    </m:oMath>'''
+    return parse_xml(omml_xml)
+
 def clean_latex_formula(text):
     """Очищує LaTeX розмітку формули та перетворює її на юнікод-символи."""
     text = re.sub(r'<p align="center">', '', text)
@@ -391,10 +417,8 @@ def add_runs_to_paragraph(p, text, font_size=14):
             run = p.add_run(val_clean)
             format_run(run, font_size=font_size, italic=True)
         elif tok_type == 'math':
-            math_clean = clean_latex_formula(tok_val)
-            math_runs = parse_math_to_runs(math_clean)
-            for m_content, is_sub, is_super, is_plain in math_runs:
-                add_math_run_to_paragraph(p, m_content, is_sub, is_super, is_plain, font_size=font_size)
+            omml_element = create_omml_equation(tok_val)
+            p._element.append(omml_element)
         else:
             val_clean = clean_text_backslashes(tok_val)
             run = p.add_run(val_clean)
@@ -646,11 +670,10 @@ def compile_markdown_to_docx():
                     p.paragraph_format.space_after = Pt(6)
                     p.paragraph_format.line_spacing = 1.5
                     
-                    p.add_run('\t')
+                    # p.add_run('\t')
                     
-                    math_runs = parse_math_to_runs(formula_clean)
-                    for m_content, is_sub, is_super, is_plain in math_runs:
-                        add_math_run_to_paragraph(p, m_content, is_sub, is_super, is_plain, font_size=14)
+                    omml_element = create_omml_equation(formula_content)
+                    p._element.append(omml_element)
                         
                     if formula_num:
                         p.add_run('\t')
@@ -667,13 +690,20 @@ def compile_markdown_to_docx():
                     line = line.strip()
                     if line.startswith('- ') or line.startswith('* '):
                         item_text = line[2:].strip()
-                        p = doc.add_paragraph(style='List Bullet')
+                        # Use hanging indent for manual bullet
+                        p = doc.add_paragraph()
+                        p.paragraph_format.left_indent = Inches(0.5)
+                        p.paragraph_format.first_line_indent = Inches(-0.25)
                         p.paragraph_format.space_after = Pt(3)
                         p.paragraph_format.space_before = Pt(0)
                         p.paragraph_format.line_spacing = 1.5
-                        p.paragraph_format.first_line_indent = Inches(0)
                         
+                        run_bullet = p.add_run('• ')
+                        run_bullet.font.name = 'Times New Roman'
+                        run_bullet.font.size = Pt(14)
                         add_runs_to_paragraph(p, item_text, font_size=14)
+                in_list = True
+                continue
                 in_list = True
                 continue
 
@@ -681,17 +711,29 @@ def compile_markdown_to_docx():
                 # Нумерований список
                 for line in lines:
                     line = line.strip()
-                    match = re.match(r'^(\d+\.)\s*(.*)$', line)
+                    match = re.match(r'^(\d+)\.\s*(.*)$', line)
                     if match:
-                        num_prefix = match.group(1)
+                        num_val = int(match.group(1))
                         item_text = match.group(2)
-                        p = doc.add_paragraph(style='List Number')
+
+                        # Use abstractNumId to restart numbering if needed
+                        # The simplest robust way in python-docx to restart numbering is not supported directly.
+                        # However, doing custom paragraph text "1. ", "2. " with hanging indent works reliably.
+                        # Let's bypass Word's auto-numbering to prevent the continuous list bug.
+                        p = doc.add_paragraph()
+                        p.paragraph_format.left_indent = Inches(0.5)
+                        p.paragraph_format.first_line_indent = Inches(-0.25)
                         p.paragraph_format.space_after = Pt(3)
                         p.paragraph_format.space_before = Pt(0)
                         p.paragraph_format.line_spacing = 1.5
-                        p.paragraph_format.first_line_indent = Inches(0)
+
+                        run_num = p.add_run(f"{num_val}. ")
+                        run_num.font.name = "Times New Roman"
+                        run_num.font.size = Pt(14)
                         
                         add_runs_to_paragraph(p, item_text, font_size=14)
+                in_list = True
+                continue
                 in_list = True
                 continue
 
