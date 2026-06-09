@@ -1,4 +1,3 @@
-<<<<<<< Updated upstream
 import os
 import graphviz
 
@@ -58,43 +57,6 @@ def generate_architecture_diagram():
     out_path = os.path.join('docs', 'images', 'architecture_flow')
     dot.render(out_path, cleanup=True)
     print(f"Generated {out_path}.png")
-=======
-
-def generate_online_learning_diagram():
-    dot = graphviz.Digraph(comment='Online Learning Flow', format='png')
-    dot.attr(rankdir='TB', size='8,10')
-    dot.attr('node', shape='box', style='rounded,filled', fillcolor='#f9f9f9', fontname='Arial')
-
-    dot.node('DB', 'База даних (TimescaleDB)', shape='cylinder', fillcolor='#e6e6ff')
-    dot.node('Load', 'Завантаження та перевірка даних\n(N >= 25)')
-    dot.node('Scale', 'Масштабування через\nglobal_scaler')
-    dot.node('Windows', 'Формування вікон зсуву\n(lookback=24, horizon=1) ──> X, y')
-    dot.node('Clone', 'Клонування базової моделі\n(fresh copy)')
-    dot.node('Compile', 'Компіляція клону\n(lr = 0.0001)')
-    dot.node('MSE1', 'Розрахунок MSE_before')
-    dot.node('Train', 'Донавчання клону в окремому потоці\n(asyncio.to_thread)', fillcolor='#ffcccc')
-    dot.node('MSE2', 'Розрахунок MSE_after')
-    dot.node('Save', 'Збереження у відповідний іменований слот\nреєстру (year / month)', fillcolor='#ccffcc')
-
-    dot.edge('DB', 'Load', dir='forward')
-    dot.edge('Load', 'Scale')
-    dot.edge('Scale', 'Windows')
-    dot.edge('Windows', 'Clone')
-    dot.edge('Clone', 'Compile')
-    dot.edge('Compile', 'MSE1')
-    dot.edge('MSE1', 'Train')
-    dot.edge('Train', 'MSE2')
-    dot.edge('MSE2', 'Save')
-
-    out_path = os.path.join('docs', 'images', 'online_learning_flow')
-    dot.render(out_path, cleanup=True)
-    print(f"Generated {out_path}.png")
-
-def generate_all():
-    generate_cnn_lstm_diagram()
-    generate_architecture_diagram()
-    generate_online_learning_diagram()
->>>>>>> Stashed changes
 
 def generate_online_learning_diagram():
     dot = graphviz.Digraph(comment='Online Learning Flow', format='png')

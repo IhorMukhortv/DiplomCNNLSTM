@@ -95,63 +95,93 @@ def format_run(run, font_name="Times New Roman", font_size=14, bold=False, itali
 
 def is_valid_math(content):
     """Визначає, чи є фрагмент дійсним математичним токеном."""
-    if not content or len(content) > 60:
+    if not content or len(content) > 150:
         return False
     # Ігноруємо фрагменти, які містять типові українські слова
-    for word in ['кВт', 'грн', 'рік', 'ТЕС', 'ФЕС', 'від', 'для', 'номінал', 'у', 'на', 'річних']:
-        if word in content:
+    for word in ['кВт', 'грн', 'рік', 'ТЕС', 'ФЕС', 'номінал', 'річних']:
+        if word in content.split():
             return False
-    # Ігноруємо фрагменти, які мають кому з пробілом та текстом (типовий перелік грошових показників)
-    if re.search(r',\s+[a-zA-Zа-яА-Я]', content):
-        return False
-    # Ігноруємо чисті цілі або десяткові числа (це грошові суми, а не формули)
-    if re.match(r'^\d+[\s\d,.]*$', content):
-        return False
+    # Долари ми вже прибрали, тому будь-який вміст між $ $ є формулою.
     return True
 
 def tokenize_paragraph(text):
     """Токенізує параграф тексту на звичайний текст, жирний, курсив та формули."""
+    # Регулярний вираз для пошуку формул усередині $...$
+    import re
+    # Тимчасово замінюємо формули на плейсхолдери
+    math_pattern = re.compile(r'\$(.*?)\$')
+    math_blocks = []
+
+    def math_repl(match):
+        content = match.group(1)
+        if is_valid_math(content):
+            math_blocks.append(content)
+            return f"__MATH_{len(math_blocks)-1}__"
+        return match.group(0)
+
+    text_with_placeholders = math_pattern.sub(math_repl, text)
+
     tokens = []
     i = 0
-    n = len(text)
+    n = len(text_with_placeholders)
     
     while i < n:
-        if text[i:i+2] == '**':
-            end = text.find('**', i+2)
+        # Check for placeholder first
+        if text_with_placeholders[i:].startswith('__MATH_'):
+            end_ph = text_with_placeholders.find('__', i + 7)
+            if end_ph != -1:
+                idx_str = text_with_placeholders[i+7:end_ph]
+                if idx_str.isdigit():
+                    idx = int(idx_str)
+                    if idx < len(math_blocks):
+                        tokens.append(('math', math_blocks[idx]))
+                        i = end_ph + 2
+                        continue
+
+        if text_with_placeholders[i:i+2] == '**':
+            end = text_with_placeholders.find('**', i+2)
             if end != -1:
-                tokens.append(('bold', text[i+2:end]))
+                bold_text = text_with_placeholders[i+2:end]
+                tokens.append(('bold', bold_text))
                 i = end + 2
                 continue
-        if text[i] == '*':
-            end = text.find('*', i+1)
+        if text_with_placeholders[i] == '*':
+            end = text_with_placeholders.find('*', i+1)
             if end != -1:
-                tokens.append(('italic', text[i+1:end]))
+                tokens.append(('italic', text_with_placeholders[i+1:end]))
                 i = end + 1
                 continue
-        if text[i] == '$':
-            end = text.find('$', i+1)
-            if end != -1:
-                content = text[i+1:end]
-                if is_valid_math(content):
-                    tokens.append(('math', content))
-                    i = end + 1
-                    continue
         
         start = i
         i += 1
         while i < n:
-            if text[i:i+2] == '**':
+            if text_with_placeholders[i:i+2] == '**':
                 break
-            if text[i] == '*':
+            if text_with_placeholders[i] == '*':
                 break
-            if text[i] == '$':
-                next_dollar = text.find('$', i+1)
-                if next_dollar != -1 and is_valid_math(text[i+1:next_dollar]):
-                    break
+            if text_with_placeholders[i:].startswith('__MATH_'):
+                break
             i += 1
-        tokens.append(('text', text[start:i]))
-        
-    return tokens
+
+        plain_text = text_with_placeholders[start:i]
+        if plain_text:
+            tokens.append(('text', plain_text))
+
+    # Resolve math inside bold/italic if they got caught
+    final_tokens = []
+    for tok_type, tok_val in tokens:
+        if tok_type in ('bold', 'italic'):
+            parts = re.split(r'(__MATH_\d+__)', tok_val)
+            for part in parts:
+                if part.startswith('__MATH_') and part.endswith('__'):
+                    idx = int(part[7:-2])
+                    final_tokens.append(('math', math_blocks[idx]))
+                elif part:
+                    final_tokens.append((tok_type, part))
+        else:
+            final_tokens.append((tok_type, tok_val))
+
+    return final_tokens
 
 def parse_braced_groups(s, start_idx):
     """Знаходить межі згрупованих фігурних дужок."""
@@ -417,8 +447,12 @@ def add_runs_to_paragraph(p, text, font_size=14):
             run = p.add_run(val_clean)
             format_run(run, font_size=font_size, italic=True)
         elif tok_type == 'math':
-            omml_element = create_omml_equation(tok_val)
-            p._element.append(omml_element)
+            # Відновлено логіку парсингу математичних токенів через runs замість OMML,
+            # оскільки OMML з чистим LaTeX не рендериться коректно без спеціального конвертера в Word.
+            formula_clean = clean_latex_formula(tok_val)
+            runs = parse_math_to_runs(formula_clean)
+            for r_text, r_sub, r_super, r_plain in runs:
+                add_math_run_to_paragraph(p, r_text, r_sub, r_super, r_plain, font_size=font_size)
         else:
             val_clean = clean_text_backslashes(tok_val)
             run = p.add_run(val_clean)
@@ -501,6 +535,29 @@ def compile_markdown_to_docx():
             lines = block.split('\n')
             first_line = lines[0].strip()
 
+            # --- Обробка кодових блоків (Code blocks) ---
+            if block.startswith('```') and block.endswith('```'):
+                code_content = block[3:-3].strip()
+                # Remove language specifier if present (e.g. ```python)
+                if code_content and code_content.split('\n')[0].strip().isalpha():
+                    code_content = '\n'.join(code_content.split('\n')[1:])
+
+                code_lines = code_content.split('\n')
+                for code_line in code_lines:
+                    p = doc.add_paragraph()
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.left_indent = Inches(0.5)
+                    p.paragraph_format.line_spacing = 1.0
+                    run = p.add_run(code_line)
+                    format_run(run, font_name="Courier New", font_size=11)
+
+                # Додаємо порожній рядок після блоку коду
+                p = doc.add_paragraph()
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(12)
+                continue
+
             # --- Обробка заголовків ---
             if first_line.startswith('# '):
                 # Заголовок Розділу/Вступу/Висновків (Heading 1)
@@ -522,6 +579,29 @@ def compile_markdown_to_docx():
                 heading_clean = clean_text_backslashes(heading_text)
                 run = p.add_run(heading_clean.upper())
                 format_run(run, font_size=14, bold=True)
+                in_list = False
+                continue
+
+            elif first_line.startswith('#### '):
+                # Заголовок підпункту (Heading 4) - перетворюємо на жирний текст на початку абзацу
+                heading_text = first_line[5:].strip()
+                # Збираємо весь текст абзацу (якщо він є після заголовку)
+                rest_of_text = " ".join([l.strip() for l in lines[1:] if l.strip()])
+
+                p = doc.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                p.paragraph_format.first_line_indent = Inches(0.5)
+                p.paragraph_format.space_before = Pt(6)
+                p.paragraph_format.space_after = Pt(6)
+                p.paragraph_format.line_spacing = 1.5
+
+                heading_clean = clean_text_backslashes(heading_text)
+                run = p.add_run(heading_clean + ". ")
+                format_run(run, font_size=14, bold=True)
+
+                if rest_of_text:
+                    add_runs_to_paragraph(p, rest_of_text, font_size=14)
+
                 in_list = False
                 continue
 
@@ -672,8 +752,9 @@ def compile_markdown_to_docx():
                     
                     # p.add_run('\t')
                     
-                    omml_element = create_omml_equation(formula_content)
-                    p._element.append(omml_element)
+                    runs = parse_math_to_runs(formula_clean)
+                    for r_text, r_sub, r_super, r_plain in runs:
+                        add_math_run_to_paragraph(p, r_text, r_sub, r_super, r_plain, font_size=14)
                         
                     if formula_num:
                         p.add_run('\t')
@@ -704,8 +785,6 @@ def compile_markdown_to_docx():
                         add_runs_to_paragraph(p, item_text, font_size=14)
                 in_list = True
                 continue
-                in_list = True
-                continue
 
             elif re.match(r'^\d+\.\s', first_line):
                 # Нумерований список
@@ -732,8 +811,6 @@ def compile_markdown_to_docx():
                         run_num.font.size = Pt(14)
                         
                         add_runs_to_paragraph(p, item_text, font_size=14)
-                in_list = True
-                continue
                 in_list = True
                 continue
 
