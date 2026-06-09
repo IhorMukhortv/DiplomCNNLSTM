@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import tensorflow as tf
-import numpy as np
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
