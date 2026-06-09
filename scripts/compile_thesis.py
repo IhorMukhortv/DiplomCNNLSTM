@@ -667,13 +667,21 @@ def compile_markdown_to_docx():
                     line = line.strip()
                     if line.startswith('- ') or line.startswith('* '):
                         item_text = line[2:].strip()
-                        p = doc.add_paragraph(style='List Bullet')
+                        # Use hanging indent for manual bullet
+                        p = doc.add_paragraph()
+                        p.paragraph_format.left_indent = Inches(0.5)
+                        p.paragraph_format.first_line_indent = Inches(-0.25)
                         p.paragraph_format.space_after = Pt(3)
                         p.paragraph_format.space_before = Pt(0)
                         p.paragraph_format.line_spacing = 1.5
-                        p.paragraph_format.first_line_indent = Inches(0)
                         
+                        run_bullet = p.add_run(f"• ")
+                        run_bullet = p.add_run('• ')
+                        run_bullet.font.name = 'Times New Roman'
+                        run_bullet.font.size = Pt(14)
                         add_runs_to_paragraph(p, item_text, font_size=14)
+                in_list = True
+                continue
                 in_list = True
                 continue
 
@@ -681,17 +689,29 @@ def compile_markdown_to_docx():
                 # Нумерований список
                 for line in lines:
                     line = line.strip()
-                    match = re.match(r'^(\d+\.)\s*(.*)$', line)
+                    match = re.match(r'^(\d+)\.\s*(.*)$', line)
                     if match:
-                        num_prefix = match.group(1)
+                        num_val = int(match.group(1))
                         item_text = match.group(2)
-                        p = doc.add_paragraph(style='List Number')
+
+                        # Use abstractNumId to restart numbering if needed
+                        # The simplest robust way in python-docx to restart numbering is not supported directly.
+                        # However, doing custom paragraph text "1. ", "2. " with hanging indent works reliably.
+                        # Let's bypass Word's auto-numbering to prevent the continuous list bug.
+                        p = doc.add_paragraph()
+                        p.paragraph_format.left_indent = Inches(0.5)
+                        p.paragraph_format.first_line_indent = Inches(-0.25)
                         p.paragraph_format.space_after = Pt(3)
                         p.paragraph_format.space_before = Pt(0)
                         p.paragraph_format.line_spacing = 1.5
-                        p.paragraph_format.first_line_indent = Inches(0)
+
+                        run_num = p.add_run(f"{num_val}. ")
+                        run_num.font.name = "Times New Roman"
+                        run_num.font.size = Pt(14)
                         
                         add_runs_to_paragraph(p, item_text, font_size=14)
+                in_list = True
+                continue
                 in_list = True
                 continue
 
