@@ -208,3 +208,15 @@ async def test_retrain_endpoint_success(client, mock_db, monkeypatch, tmp_path):
     assert "loss_after" in data
     assert len(data["loss_history"]) == 2
 
+
+@pytest.mark.anyio
+async def test_retrain_endpoint_value_error(client, mock_db, monkeypatch):
+    """Перевіряє, що роут донавчання повертає помилку 400 при ValueError."""
+    mock_retrain = AsyncMock(side_effect=ValueError("Test value error"))
+    monkeypatch.setattr("app.api.v1.endpoints.predict.retrain_on_recent_data", mock_retrain)
+
+    response = await client.post("/api/v1/predict/retrain", json={"limit_hours": 30, "epochs": 2})
+
+    assert response.status_code == 400
+    data = response.json()
+    assert data["detail"] == "Test value error"
