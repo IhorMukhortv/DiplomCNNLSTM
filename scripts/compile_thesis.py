@@ -3,7 +3,7 @@ import re
 import logging
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
@@ -28,6 +28,35 @@ CHAPTER_FILES = [
 ]
 
 OUTPUT_DOCX = "docs/thesis/diploma_work.docx"
+
+ROMAN_WORDS = {
+    "CAPEX", "OPEX", "LCOE", "MAE", "RMSE", "MAPE", "NOCT", "STC", "GHI", 
+    "DNI", "DHI", "sin", "cos", "tanh", "max", "min", "actual", "forecast", 
+    "imbalance", "penalty", "scaled", "SELECT", "create_hypertable", 
+    "pv_telemetry", "Persistence", "fuel", "temp", "amb", "cell", "inv"
+}
+
+GREEK_LETTERS = {
+    '\\gamma': 'γ',
+    '\\phi': 'φ',
+    '\\delta': 'δ',
+    '\\omega': 'ω',
+    '\\theta': 'θ',
+    '\\sigma': 'σ',
+    '\\rho': 'ρ',
+    '\\eta': 'η',
+    '\\nu': 'ν',
+    '\\beta': 'β',
+    '\\alpha': 'α',
+    '\\tilde{C': 'C̃',  # Handle \tilde{C}
+    '\\hat{y': 'ŷ',    # Handle \hat{y}
+    '\\bar{x': 'x̄',    # Handle \bar{x}
+    '\\bar{y': 'ȳ',    # Handle \bar{y}
+    '\\sum': '∑',
+    '\\prod': '∏',
+}
+
+MATH_FUNCTIONS = ["tanh", "sin", "cos", "max", "min", "ln", "log", "exp", "lim", "deg", "det", "dim", "sup", "inf"]
 
 def set_cell_margins(cell, top=100, bottom=100, left=150, right=150):
     """Налаштування відступів всередині комірки таблиці."""
@@ -64,38 +93,323 @@ def format_run(run, font_name="Times New Roman", font_size=14, bold=False, itali
     run.italic = italic
     run.font.color.rgb = RGBColor(*color_rgb)
 
+def is_valid_math(content):
+    """Визначає, чи є фрагмент дійсним математичним токеном."""
+    if not content or len(content) > 60:
+        return False
+    # Ігноруємо фрагменти, які містять типові українські слова
+    for word in ['кВт', 'грн', 'рік', 'ТЕС', 'ФЕС', 'від', 'для', 'номінал', 'у', 'на', 'річних']:
+        if word in content:
+            return False
+    # Ігноруємо фрагменти, які мають кому з пробілом та текстом (типовий перелік грошових показників)
+    if re.search(r',\s+[a-zA-Zа-яА-Я]', content):
+        return False
+    # Ігноруємо чисті цілі або десяткові числа (це грошові суми, а не формули)
+    if re.match(r'^\d+[\s\d,.]*$', content):
+        return False
+    return True
+
+def tokenize_paragraph(text):
+    """Токенізує параграф тексту на звичайний текст, жирний, курсив та формули."""
+    tokens = []
+    i = 0
+    n = len(text)
+    
+    while i < n:
+        if text[i:i+2] == '**':
+            end = text.find('**', i+2)
+            if end != -1:
+                tokens.append(('bold', text[i+2:end]))
+                i = end + 2
+                continue
+        if text[i] == '*':
+            end = text.find('*', i+1)
+            if end != -1:
+                tokens.append(('italic', text[i+1:end]))
+                i = end + 1
+                continue
+        if text[i] == '$':
+            end = text.find('$', i+1)
+            if end != -1:
+                content = text[i+1:end]
+                if is_valid_math(content):
+                    tokens.append(('math', content))
+                    i = end + 1
+                    continue
+        
+        start = i
+        i += 1
+        while i < n:
+            if text[i:i+2] == '**':
+                break
+            if text[i] == '*':
+                break
+            if text[i] == '$':
+                next_dollar = text.find('$', i+1)
+                if next_dollar != -1 and is_valid_math(text[i+1:next_dollar]):
+                    break
+            i += 1
+        tokens.append(('text', text[start:i]))
+        
+    return tokens
+
+def parse_braced_groups(s, start_idx):
+    """Знаходить межі згрупованих фігурних дужок."""
+    depth = 0
+    for idx in range(start_idx, len(s)):
+        if s[idx] == '{':
+            depth += 1
+        elif s[idx] == '}':
+            depth -= 1
+            if depth == 0:
+                return start_idx + 1, idx
+    return None
+
+def convert_fractions(s):
+    """Рекурсивно перетворює LaTeX дроби \frac{A}{B} на (A)/(B)."""
+    while True:
+        idx = s.find('\\frac')
+        if idx == -1:
+            break
+        first_brace = s.find('{', idx + 5)
+        if first_brace == -1:
+            s = s[:idx] + " " + s[idx+5:]
+            continue
+        res = parse_braced_groups(s, first_brace)
+        if not res:
+            break
+        start1, end1 = res
+        second_brace = s.find('{', end1 + 1)
+        if second_brace == -1 or any(c not in ' \t\n' for c in s[end1+1:second_brace]):
+            s = s[:idx] + s[start1:end1] + s[end1+1:]
+            continue
+        res2 = parse_braced_groups(s, second_brace)
+        if not res2:
+            break
+        start2, end2 = res2
+        
+        num = s[start1:end1]
+        den = s[second_brace+1:end2]
+        
+        num = convert_fractions(num)
+        den = convert_fractions(den)
+        
+        num_str = f"({num})" if ('+' in num or '-' in num or ' ' in num or '*' in num or '/' in num) and not (num.startswith('(') and num.endswith(')')) else num
+        den_str = f"({den})" if ('+' in den or '-' in den or ' ' in den or '*' in den or '/' in den) and not (den.startswith('(') and den.endswith(')')) else den
+        
+        fraction_replacement = f"{num_str}/{den_str}"
+        s = s[:idx] + fraction_replacement + s[end2+1:]
+    return s
+
+def convert_sqrt(s):
+    """Рекурсивно перетворює LaTeX квадратні корені \sqrt{A} на √(A)."""
+    while True:
+        idx = s.find('\\sqrt')
+        if idx == -1:
+            break
+        brace = s.find('{', idx + 5)
+        if brace == -1:
+            s = s[:idx] + "√" + s[idx+5:]
+            continue
+        res = parse_braced_groups(s, brace)
+        if not res:
+            break
+        start, end = res
+        content = s[start:end]
+        content = convert_sqrt(content)
+        replacement = f"√({content})"
+        s = s[:idx] + replacement + s[end+1:]
+    return s
+
+def clean_latex_formula(text):
+    """Очищує LaTeX розмітку формули та перетворює її на юнікод-символи."""
+    text = re.sub(r'<p align="center">', '', text)
+    text = re.sub(r'</p>', '', text)
+    text = re.sub(r'\\qquad.*$', '', text)
+    text = re.sub(r'\\eqno.*$', '', text)
+    
+    # Попереднє очищення комбінованих символів із фігурними дужками
+    text = text.replace('\\tilde{C}', 'C̃')
+    text = text.replace('\\hat{y}', 'ŷ')
+    text = text.replace('\\bar{x}', 'x̄')
+    text = text.replace('\\bar{y}', 'ȳ')
+    
+    # Захист блоків \text{...} від обробки підрядкових/надрядкових індексів
+    text = re.sub(r'\\text\s*\{([^{}]+)\}', r'«\1»', text)
+    
+    text = convert_fractions(text)
+    text = convert_sqrt(text)
+    
+    # Заміна грецьких літер та математичних сум
+    for lat, uni in GREEK_LETTERS.items():
+        text = text.replace(lat, uni)
+        
+    for func in MATH_FUNCTIONS:
+        text = text.replace(f'\\{func}', func)
+        
+    text = text.replace('\\times', ' × ')
+    text = text.replace('\\cdot', ' · ')
+    text = text.replace('\\odot', ' ⊙ ')
+    text = text.replace('\\approx', ' ≈ ')
+    text = text.replace('\\pm', ' ± ')
+    text = text.replace('\\ge', ' ≥ ')
+    text = text.replace('\\le', ' ≤ ')
+    text = text.replace('\\left|', '|')
+    text = text.replace('\\right|', '|')
+    text = text.replace('\\left(', '(')
+    text = text.replace('\\right)', ')')
+    text = text.replace('\\left[', '[')
+    text = text.replace('\\right]', ']')
+    text = text.replace('\\qquad', '   ')
+    
+    text = text.replace('\\,', ' ')
+    text = text.replace('\\;', ' ')
+    text = text.replace('\\!', '')
+    text = text.replace('\\%', '%')
+    text = text.replace('\\_', '_')
+    text = text.replace('\\#', '#')
+    
+    return text.strip()
+
+def parse_math_to_runs(text):
+    """Розбиває математичну формулу на окремі фрагменти (runs) з індексами."""
+    runs = [] # список кортежів (вміст, is_sub, is_super, is_plain)
+    i = 0
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char == '«':
+            end = text.find('»', i+1)
+            if end != -1:
+                runs.append((text[i+1:end], False, False, True))
+                i = end + 1
+                continue
+        if char == '_':
+            i += 1
+            if i < n and text[i] == '{':
+                start = i + 1
+                depth = 1
+                end = start
+                while end < n and depth > 0:
+                    if text[end] == '{':
+                        depth += 1
+                    elif text[end] == '}':
+                        depth -= 1
+                    end += 1
+                runs.append((text[start:end-1], True, False, False))
+                i = end
+            else:
+                start = i
+                while i < n and (text[i].isalnum() or text[i] == '-'):
+                    i += 1
+                runs.append((text[start:i], True, False, False))
+        elif char == '^':
+            i += 1
+            if i < n and text[i] == '{':
+                start = i + 1
+                depth = 1
+                end = start
+                while end < n and depth > 0:
+                    if text[end] == '{':
+                        depth += 1
+                    elif text[end] == '}':
+                        depth -= 1
+                    end += 1
+                runs.append((text[start:end-1], False, True, False))
+                i = end
+            else:
+                start = i
+                while i < n and (text[i].isalnum() or text[i] in '+-'):
+                    i += 1
+                runs.append((text[start:i], False, True, False))
+        else:
+            start = i
+            while i < n and text[i] not in ('_', '^', '«'):
+                i += 1
+            runs.append((text[start:i], False, False, False))
+    return runs
+
+def add_math_run_to_paragraph(p, text, is_sub, is_super, is_plain=False, font_size=14):
+    """Додає математичний фрагмент до параграфа з виділенням курсивом змінних."""
+    text = text.replace('«', '').replace('»', '')
+    if is_plain:
+        r = p.add_run(text)
+        r.font.name = "Times New Roman"
+        r.font.size = Pt(font_size)
+        r.font.color.rgb = RGBColor(0, 0, 0)
+        if is_sub:
+            r.font.subscript = True
+        elif is_super:
+            r.font.superscript = True
+        r.italic = False
+        return
+        
+    parts = re.split(r'([a-zA-Zа-яА-ЯёЁіІїЇєЄґҐα-ωΑ-Ωθ̃́̄\d]+)', text)
+    for part in parts:
+        if not part:
+            continue
+        r = p.add_run(part)
+        r.font.name = "Times New Roman"
+        r.font.size = Pt(font_size)
+        r.font.color.rgb = RGBColor(0, 0, 0)
+        
+        if is_sub:
+            r.font.subscript = True
+        elif is_super:
+            r.font.superscript = True
+            
+        # Застосування курсиву до літерних змінних, крім констант та абревіатур з ROMAN_WORDS
+        if part[0].isalpha():
+            if part in ROMAN_WORDS:
+                r.italic = False
+            else:
+                r.italic = True
+        else:
+            r.italic = False
+
+def clean_text_backslashes(text):
+    """Очищає екрановані символи у звичайному тексті."""
+    text = text.replace('\\%', '%')
+    text = text.replace('\\_', '_')
+    text = text.replace('\\#', '#')
+    text = text.replace('\\$', '$')
+    text = text.replace('\\&', '&')
+    text = text.replace('\\{', '{')
+    text = text.replace('\\}', '}')
+    return text
+
+def add_runs_to_paragraph(p, text, font_size=14):
+    """Додає форматовані фрагменти тексту до параграфа."""
+    tokens = tokenize_paragraph(text)
+    for tok_type, tok_val in tokens:
+        if tok_type == 'bold':
+            val_clean = clean_text_backslashes(tok_val)
+            run = p.add_run(val_clean)
+            format_run(run, font_size=font_size, bold=True)
+        elif tok_type == 'italic':
+            val_clean = clean_text_backslashes(tok_val)
+            run = p.add_run(val_clean)
+            format_run(run, font_size=font_size, italic=True)
+        elif tok_type == 'math':
+            math_clean = clean_latex_formula(tok_val)
+            math_runs = parse_math_to_runs(math_clean)
+            for m_content, is_sub, is_super, is_plain in math_runs:
+                add_math_run_to_paragraph(p, m_content, is_sub, is_super, is_plain, font_size=font_size)
+        else:
+            val_clean = clean_text_backslashes(tok_val)
+            run = p.add_run(val_clean)
+            format_run(run, font_size=font_size)
+
 def add_formatted_paragraph(doc, text, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, first_line_indent=Inches(0.5), space_after=6, space_before=0, line_spacing=1.5):
-    """
-    Додає параграф і парсить базові inline-елементи:
-    - **bold** -> жирний
-    - *italic* -> курсив
-    - $math$ -> курсив (змінні/формули)
-    """
+    """Додає параграф тексту, згенерований за вимогами ДСТУ."""
     p = doc.add_paragraph()
     p.alignment = alignment
     p.paragraph_format.first_line_indent = first_line_indent
     p.paragraph_format.line_spacing = line_spacing
     p.paragraph_format.space_after = Pt(space_after)
     p.paragraph_format.space_before = Pt(space_before)
-
-    # Регулярний вираз для токенізації жирного, курсива та вбудованих формул
-    tokens = re.split(r'(\*\*.*?\*\*|\*.*?\*|\$.*?\$)', text)
-    for token in tokens:
-        if not token:
-            continue
-        
-        if token.startswith('**') and token.endswith('**'):
-            run = p.add_run(token[2:-2])
-            format_run(run, bold=True)
-        elif token.startswith('*') and token.endswith('*'):
-            run = p.add_run(token[1:-1])
-            format_run(run, italic=True)
-        elif token.startswith('$') and token.endswith('$'):
-            run = p.add_run(token[1:-1])
-            format_run(run, italic=True)
-        else:
-            run = p.add_run(token)
-            format_run(run)
+    
+    add_runs_to_paragraph(p, text, font_size=14)
     return p
 
 def parse_markdown_table(block_lines):
@@ -180,7 +494,9 @@ def compile_markdown_to_docx():
                 p.paragraph_format.space_before = Pt(12)
                 p.paragraph_format.space_after = Pt(18)
                 p.paragraph_format.line_spacing = 1.5
-                run = p.add_run(heading_text.upper())
+                
+                heading_clean = clean_text_backslashes(heading_text)
+                run = p.add_run(heading_clean.upper())
                 format_run(run, font_size=14, bold=True)
                 in_list = False
                 continue
@@ -193,7 +509,9 @@ def compile_markdown_to_docx():
                 p.paragraph_format.space_before = Pt(12)
                 p.paragraph_format.space_after = Pt(12)
                 p.paragraph_format.line_spacing = 1.5
-                run = p.add_run(heading_text)
+                
+                heading_clean = clean_text_backslashes(heading_text)
+                run = p.add_run(heading_clean)
                 format_run(run, font_size=14, bold=True)
                 in_list = False
                 continue
@@ -206,7 +524,9 @@ def compile_markdown_to_docx():
                 p.paragraph_format.space_before = Pt(12)
                 p.paragraph_format.space_after = Pt(6)
                 p.paragraph_format.line_spacing = 1.5
-                run = p.add_run(heading_text)
+                
+                heading_clean = clean_text_backslashes(heading_text)
+                run = p.add_run(heading_clean)
                 format_run(run, font_size=14, bold=True, italic=True)
                 in_list = False
                 continue
@@ -241,23 +561,7 @@ def compile_markdown_to_docx():
                         cell_p.paragraph_format.space_before = Pt(2)
                         cell_p.paragraph_format.first_line_indent = Inches(0)
                         
-                        # Парсимо inline стилі в комірці
-                        tokens = re.split(r'(\*\*.*?\*\*|\*.*?\*|\$.*?\$)', cell_value)
-                        for token in tokens:
-                            if not token:
-                                continue
-                            if token.startswith('**') and token.endswith('**'):
-                                run = cell_p.add_run(token[2:-2])
-                                format_run(run, font_size=12, bold=True)
-                            elif token.startswith('*') and token.endswith('*'):
-                                run = cell_p.add_run(token[1:-1])
-                                format_run(run, font_size=12, italic=True)
-                            elif token.startswith('$') and token.endswith('$'):
-                                run = cell_p.add_run(token[1:-1])
-                                format_run(run, font_size=12, italic=True)
-                            else:
-                                run = cell_p.add_run(token)
-                                format_run(run, font_size=12)
+                        add_runs_to_paragraph(cell_p, cell_value, font_size=12)
                 
                 # Додаємо порожній рядок після таблиці для візуального відступу
                 p = doc.add_paragraph()
@@ -267,7 +571,6 @@ def compile_markdown_to_docx():
                 continue
 
             # --- Обробка зображень ---
-            # Виявлення зображення у форматі ![caption](path) або <p align="center"><img>
             img_match = re.search(r'!\[(.*?)\]\((.*?)\)', block)
             if img_match:
                 caption = img_match.group(1)
@@ -323,44 +626,39 @@ def compile_markdown_to_docx():
                 continue
 
             # --- Обробка блок-формул $$ ---
-            # Формули розміщуються по центру, номер формули — праворуч
-            formula_match = re.search(r'\$\$\s*(.*?)\s*\$\$', block, re.DOTALL)
-            if formula_match:
-                formula_content = formula_match.group(1).strip()
-                # Перевіряємо наявність HTML тегів або eqno номерів формули
-                formula_clean = re.sub(r'\\qquad.*$', '', formula_content).strip()
-                formula_clean = re.sub(r'\\eqno.*$', '', formula_clean).strip()
-                
-                # Спробуємо знайти номер формули (наприклад, (8.1))
-                num_match = re.search(r'\((?:\d+\.\d+|\d+)\)', formula_content)
-                formula_num = num_match.group(0) if num_match else ""
-                
-                # Додаємо формулу як центрований параграф
-                p = doc.add_paragraph()
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.space_before = Pt(6)
-                p.paragraph_format.space_after = Pt(6)
-                p.paragraph_format.first_line_indent = Inches(0)
-                
-                # Якщо є номер, ми створюємо гарне форматування табуляцією або пробілами
-                # Для простоти, додамо формулу та номер в один рядок
-                formula_text = formula_clean.replace('\\times', ' × ').replace('\\text', '').replace('{', '').replace('}', '').replace('\\', '')
-                if formula_num:
-                    # Додаємо великий простір перед номером формули
-                    run_form = p.add_run(formula_text)
-                    format_run(run_form, italic=True)
+            # Формули розміщуються по центру, номер формули — праворуч за допомогою tab stops
+            if '$$' in block:
+                formula_match = re.search(r'\$\$\s*(.*?)\s*\$\$', block, re.DOTALL)
+                if formula_match:
+                    formula_content = formula_match.group(1).strip()
+                    formula_clean = clean_latex_formula(formula_content)
                     
-                    # Спрощений таб-ефект для номеру формули
-                    run_space = p.add_run(" " * 40)
-                    format_run(run_space)
+                    # Шукаємо номер формули в усьому блоці (а не лише всередині $$)
+                    num_match = re.search(r'\(\s*(?:\d+\.\d+|\d+)\s*\)', block)
+                    formula_num = num_match.group(0) if num_match else ""
                     
-                    run_num = p.add_run(formula_num)
-                    format_run(run_num)
-                else:
-                    run_form = p.add_run(formula_text)
-                    format_run(run_form, italic=True)
-                in_list = False
-                continue
+                    p = doc.add_paragraph()
+                    # Налаштування табуляції для центрування формули та притискання номеру праворуч
+                    p.paragraph_format.tab_stops.add_tab_stop(Inches(3.35), alignment=WD_TAB_ALIGNMENT.CENTER)
+                    p.paragraph_format.tab_stops.add_tab_stop(Inches(6.70), alignment=WD_TAB_ALIGNMENT.RIGHT)
+                    p.paragraph_format.first_line_indent = Inches(0)
+                    p.paragraph_format.space_before = Pt(6)
+                    p.paragraph_format.space_after = Pt(6)
+                    p.paragraph_format.line_spacing = 1.5
+                    
+                    p.add_run('\t')
+                    
+                    math_runs = parse_math_to_runs(formula_clean)
+                    for m_content, is_sub, is_super, is_plain in math_runs:
+                        add_math_run_to_paragraph(p, m_content, is_sub, is_super, is_plain, font_size=14)
+                        
+                    if formula_num:
+                        p.add_run('\t')
+                        run_num = p.add_run(formula_num)
+                        format_run(run_num, font_size=14)
+                        
+                    in_list = False
+                    continue
 
             # --- Обробка списків ---
             if first_line.startswith('- ') or first_line.startswith('* '):
@@ -375,23 +673,7 @@ def compile_markdown_to_docx():
                         p.paragraph_format.line_spacing = 1.5
                         p.paragraph_format.first_line_indent = Inches(0)
                         
-                        # Парсимо inline форматування
-                        tokens = re.split(r'(\*\*.*?\*\*|\*.*?\*|\$.*?\$)', item_text)
-                        for token in tokens:
-                            if not token:
-                                continue
-                            if token.startswith('**') and token.endswith('**'):
-                                run = p.add_run(token[2:-2])
-                                format_run(run, bold=True)
-                            elif token.startswith('*') and token.endswith('*'):
-                                run = p.add_run(token[1:-1])
-                                format_run(run, italic=True)
-                            elif token.startswith('$') and token.endswith('$'):
-                                run = p.add_run(token[1:-1])
-                                format_run(run, italic=True)
-                            else:
-                                run = p.add_run(token)
-                                format_run(run)
+                        add_runs_to_paragraph(p, item_text, font_size=14)
                 in_list = True
                 continue
 
@@ -409,23 +691,7 @@ def compile_markdown_to_docx():
                         p.paragraph_format.line_spacing = 1.5
                         p.paragraph_format.first_line_indent = Inches(0)
                         
-                        # Парсимо inline форматування
-                        tokens = re.split(r'(\*\*.*?\*\*|\*.*?\*|\$.*?\$)', item_text)
-                        for token in tokens:
-                            if not token:
-                                continue
-                            if token.startswith('**') and token.endswith('**'):
-                                run = p.add_run(token[2:-2])
-                                format_run(run, bold=True)
-                            elif token.startswith('*') and token.endswith('*'):
-                                run = p.add_run(token[1:-1])
-                                format_run(run, italic=True)
-                            elif token.startswith('$') and token.endswith('$'):
-                                run = p.add_run(token[1:-1])
-                                format_run(run, italic=True)
-                            else:
-                                run = p.add_run(token)
-                                format_run(run)
+                        add_runs_to_paragraph(p, item_text, font_size=14)
                 in_list = True
                 continue
 
