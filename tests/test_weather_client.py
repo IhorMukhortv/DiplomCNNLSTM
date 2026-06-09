@@ -77,3 +77,17 @@ async def test_get_historical_weather_api_error_response():
             await client.get_historical_weather(95.0, -122.17, "2017-03-01", "2017-03-01")
         
         assert "Помилка API Open-Meteo" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_get_historical_weather_request_error():
+    client = WeatherClient()
+
+    # Створюємо мок для httpx.AsyncClient.get, який викликає RequestError
+    mock_request = httpx.Request("GET", "https://archive-api.open-meteo.com/v1/archive")
+
+    with patch("httpx.AsyncClient.get", side_effect=httpx.RequestError("Connection timeout", request=mock_request)):
+        with pytest.raises(WeatherServiceError) as exc_info:
+            await client.get_historical_weather(37.43, -122.17, "2017-03-01", "2017-03-01")
+
+        assert "Помилка мережі при запиті до погоди" in str(exc_info.value)
