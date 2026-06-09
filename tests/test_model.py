@@ -117,6 +117,21 @@ def test_cnn_lstm_model_shapes():
     assert model.output_shape == (None, 1)
 
 
+def test_calculate_mape_empty_mask():
+    """Тестує обчислення MAPE у випадку, коли всі значення нижче порогу."""
+    y_true = np.array([0.1, 0.15, 0.05])
+    y_pred = np.array([0.2, 0.3, 0.1])
+
+    # Threshold за замовчуванням 0.2, тому всі значення y_true будуть відфільтровані
+    mape = calculate_mape(y_true, y_pred)
+    assert mape == 0.0
+
+    # Перевірка з масивом нулів
+    y_true_zeros = np.zeros(3)
+    mape_zeros = calculate_mape(y_true_zeros, y_pred)
+    assert mape_zeros == 0.0
+
+
 def test_metrics_calculation():
     """Тестує математичну точність метрик якості прогнозування."""
     y_true = np.array([2.0, 4.0, 6.0])
