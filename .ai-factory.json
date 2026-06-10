@@ -1,5 +1,5 @@
 {
-  "version": "2.14.0",
+  "version": "2.15.0",
   "agents": [
     {
       "id": "antigravity",
@@ -33,13 +33,6 @@
         "aif-skill-generator",
         "aif-verify"
       ],
-      "mcp": {
-        "github": true,
-        "filesystem": true,
-        "postgres": true,
-        "chromeDevtools": false,
-        "playwright": false
-      },
       "managedSkills": {
         "aif": {
           "sourceHash": "ae9201992139ee54ccf2112d8a155ebf0ee71d84efa0d700ccea14083ec494a4",
@@ -150,7 +143,19 @@
           "installedHash": "4c93f987a10d0fe761b0a309f01bdbac8c9f51d461288d2043c067930215a87f"
         }
       },
-      "agentFileSources": {}
+      "installedAgentFiles": [],
+      "agentFileSources": {},
+      "managedAgentFiles": {},
+      "configFiles": [],
+      "installedConfigFiles": [],
+      "managedConfigFiles": {},
+      "mcp": {
+        "github": true,
+        "filesystem": true,
+        "postgres": true,
+        "chromeDevtools": false,
+        "playwright": false
+      }
     }
   ],
   "extensions": []
