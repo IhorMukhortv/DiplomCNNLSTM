@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import logging
 from docx import Document
-from docx.shared import Pt, Inches, RGBColor
+from docx.shared import Pt, Inches, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
@@ -19,14 +19,10 @@ logger = logging.getLogger("compile_thesis")
 # Послідовність файлів розділів дипломної роботи
 CHAPTER_FILES = [
     "docs/thesis/introduction.md",
-    "docs/thesis/chapter1_data_collection_analysis.md",
-    "docs/thesis/chapter2_theoretical_background.md",
-    "docs/thesis/chapter3_model_design.md",
-    "docs/thesis/chapter4_infrastructure.md",
-    "docs/thesis/chapter5_training_evaluation.md",
-    "docs/thesis/chapter6_online_learning.md",
-    "docs/thesis/chapter7_practical_implementation.md",
-    "docs/thesis/chapter8_economic_analysis.md",
+    "docs/thesis/chapter1.md",
+    "docs/thesis/chapter2.md",
+    "docs/thesis/chapter3.md",
+    "docs/thesis/chapter4.md",
     "docs/thesis/conclusions.md",
     "docs/thesis/references.md"
 ]
@@ -123,15 +119,16 @@ def format_heading_style(style, font_size=14, bold=True, italic=False, alignment
         p_format.space_before = Pt(space_before)
         p_format.space_after = Pt(space_after)
         p_format.first_line_indent = Inches(0)
+        p_format.keep_with_next = True
         p_format.alignment = alignment
 
 def paragraph_has_image(p):
     """Перевіряє, чи містить параграф зображення."""
     p_el = p._p
-    if p_el.find(qn('w:drawing')) is not None:
-        return True
-    if p_el.find(qn('pic:pic')) is not None:
-        return True
+    for elem in p_el.iter():
+        tag = elem.tag
+        if tag.endswith('}drawing') or tag.endswith('}pic'):
+            return True
     return False
 
 def find_math_element(p):
@@ -150,8 +147,8 @@ def preprocess_markdown(content):
     # Видаляємо горизонтальні роздільники ---
     content = re.sub(r'^\s*-{3,}\s*$', '', content, flags=re.MULTILINE)
 
-    # Очищаємо провідні косі риски у шляхах до зображень для локального рендерингу Pandoc
-    content = re.sub(r'!\[(.*?)\]\(/+(.*?)\)', r'![\1](\2)', content)
+    # Очищаємо провідні косі риски у шляхах до зображень та вилучаємо alt text для уникнення подвійних підписів
+    content = re.sub(r'!\[.*?\]\((?:/+|)(.*?)\)', r'![](\1)', content)
     
     # Заголовки розділів (#) робимо великими літерами за вимогами ДСТУ
     def uppercase_headers(match):
@@ -161,23 +158,30 @@ def preprocess_markdown(content):
     # Вилучаємо номери формул і переформатовуємо їх під пост-процесор
     def replace_equation(match):
         formula_content = match.group(1).strip()
-        block_text = match.group(0)
         
-        # Шукаємо номер формули
-        num_match = re.search(r'\(\s*(\d+\.\d+|\d+)\s*\)', block_text)
-        eq_num = num_match.group(0) if num_match else ""
+        # Номер формули може бути в групі 2 (якщо зовні) або всередині блоку
+        eq_num = match.group(2) if len(match.groups()) >= 2 and match.group(2) else None
         
+        if not eq_num:
+            num_match = re.search(r'\(\s*(\d+\.\d+|\d+)\s*\)', formula_content)
+            eq_num = num_match.group(0) if num_match else ""
+        else:
+            eq_num = eq_num.strip()
+            
         formula_clean = re.sub(r'\\qquad.*$', '', formula_content).strip()
         formula_clean = re.sub(r'\\eqno.*$', '', formula_clean).strip()
         if eq_num:
             formula_clean = formula_clean.replace(eq_num, '').strip()
+            # Видаляємо можливі \qquad або \eqno в кінці формули
+            formula_clean = re.sub(r'\\qquad\s*$', '', formula_clean).strip()
+            formula_clean = re.sub(r'\\eqno\s*$', '', formula_clean).strip()
             
         if eq_num:
             return f"\n\n$${formula_clean}$$\n\n[EQNO: {eq_num}]\n\n"
         else:
             return f"\n\n$${formula_clean}$$\n\n"
             
-    content = re.sub(r'\$\$(.*?)\$\$', replace_equation, content, flags=re.DOTALL)
+    content = re.sub(r'\$\$(.*?)\$\$(?:\s*(\(\s*\d+(?:\.\d+)*\s*\)))?', replace_equation, content, flags=re.DOTALL)
     return content
 
 def post_process_docx(docx_path):
@@ -187,10 +191,10 @@ def post_process_docx(docx_path):
     
     # Налаштування полів сторінки
     for section in doc.sections:
-        section.top_margin = Inches(0.787)      # 20 мм
-        section.bottom_margin = Inches(0.787)   # 20 мм
-        section.left_margin = Inches(0.984)     # 25 мм
-        section.right_margin = Inches(0.59)      # 15 мм
+        section.top_margin = Cm(2.0)      # 20 мм
+        section.bottom_margin = Cm(2.0)   # 20 мм
+        section.left_margin = Cm(2.5)     # 25 мм
+        section.right_margin = Cm(1.5)    # 15 мм
 
     # Налаштування стилю Normal (основний текст)
     style_normal = doc.styles['Normal']
@@ -200,9 +204,9 @@ def post_process_docx(docx_path):
     font.color.rgb = RGBColor(0, 0, 0)
     p_format = style_normal.paragraph_format
     p_format.line_spacing = 1.5
-    p_format.space_after = Pt(6)
+    p_format.space_after = Pt(0)          # Без додаткових інтервалів між абзацами
     p_format.space_before = Pt(0)
-    p_format.first_line_indent = Inches(0.5)
+    p_format.first_line_indent = Cm(1.25) # Абзацний відступ рівно 1.25 см
     p_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
     # Налаштування заголовків (Heading 1 - Heading 6)
@@ -255,6 +259,7 @@ def post_process_docx(docx_path):
             style.paragraph_format.line_spacing = 1.5
             style.paragraph_format.space_before = Pt(0)
             style.paragraph_format.space_after = Pt(3)
+            style.paragraph_format.first_line_indent = Cm(0)
 
     # Пошук та форматування блок-формул із номерами праворуч
     paragraphs = list(doc.paragraphs)
@@ -326,7 +331,7 @@ def post_process_docx(docx_path):
         text_clean = p.text.strip()
         if text_clean.startswith("де "):
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.first_line_indent = Inches(0.5)
+            p.paragraph_format.first_line_indent = Cm(1.25)
 
         if text_clean.startswith("Рисунок") or text_clean.startswith("Таблиця") or text_clean.startswith("Рисунок."):
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -354,11 +359,46 @@ def post_process_docx(docx_path):
                         run.font.name = "Times New Roman"
                         run.font.size = Pt(12)
                         
+    # Автоматичне масштабування великих зображень
+    logger.info("Масштабування зображень до стандартних розмірів...")
+    max_width_emu = Cm(15.0)
+    max_height_emu = Cm(10.0)
+    for shape in doc.inline_shapes:
+        width = shape.width
+        height = shape.height
+        if not width or not height:
+            continue
+        
+        scale = 1.0
+        if width > max_width_emu:
+            scale = min(scale, max_width_emu / width)
+        if height > max_height_emu:
+            scale = min(scale, max_height_emu / height)
+            
+        if scale < 1.0:
+            old_w, old_h = shape.width, shape.height
+            shape.width = int(width * scale)
+            shape.height = int(height * scale)
+            logger.info(f"Зображення масштабовано з {old_w}x{old_h} до {shape.width}x{shape.height} (EMU)")
+                        
     doc.save(docx_path)
     logger.info("Пост-обробка успішно завершена.")
 
 def compile_markdown_to_docx():
     logger.info("Початок компіляції дипломної роботи через Pandoc...")
+    
+    # Автоматично генеруємо зображення структури каталогів перед початком
+    try:
+        logger.info("Автоматична генерація зображення структури каталогів...")
+        try:
+            from scripts.generate_structure_image import generate_tree_image
+        except ImportError:
+            import generate_structure_image
+            generate_tree_image = generate_structure_image.generate_tree_image
+        generate_tree_image("docs/images/project_structure.png")
+    except Exception as e:
+        logger.warning(f"Не вдалося автоматично згенерувати зображення структури: {e}")
+        
     pandoc_bin = find_pandoc()
     if not pandoc_bin:
         logger.error("Pandoc не знайдено! Встановіть його за допомогою: winget install JohnMacFarlane.Pandoc")
