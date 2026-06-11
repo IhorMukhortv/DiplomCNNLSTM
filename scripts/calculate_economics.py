@@ -31,8 +31,8 @@ def main():
     gas_params = {
         "capex_per_kw": 44000.0,            # 1100.0 * 40
         "opex_fixed_per_kw_year": 1000.0,    # 25.0 * 40
-        "fuel_cost_per_kwh": 2.80,          # 0.07 * 40
-        "annual_generation_kwh_per_kw": 2628.0,  # КВВП = 30% (піковий режим)
+        "fuel_cost_per_kwh": 6.00,          # Реалістична вартість газу в Україні
+        "annual_generation_kwh_per_kw": 876.0,   # КВВП = 10% (піковий режим OCGT)
         "discount_rate": discount_rate,
         "lifetime_years": 30
     }
@@ -41,10 +41,10 @@ def main():
     coal_params = {
         "capex_per_kw": 120000.0,           # 3000.0 * 40
         "opex_fixed_per_kw_year": 1600.0,    # 40.0 * 40
-        "fuel_cost_per_kwh": 1.60,          # 0.04 * 40
+        "fuel_cost_per_kwh": 3.00,          # Реалістична вартість вугілля в Україні
         "annual_generation_kwh_per_kw": 5256.0,  # КВВП = 60% (базовий режим)
         "discount_rate": discount_rate,
-        "lifetime_years": 40
+        "lifetime_years": 20                # Термін обмежено через CBAM та декарбонізацію
     }
 
     # Розрахунок LCOE (грн за кВт-год)

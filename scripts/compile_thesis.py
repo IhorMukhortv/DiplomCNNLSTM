@@ -112,7 +112,7 @@ def format_heading_style(style, font_size=14, bold=True, italic=False, alignment
     font.bold = bold
     font.italic = italic
     font.color.rgb = RGBColor(0, 0, 0)
-    
+
     if hasattr(style, 'paragraph_format'):
         p_format = style.paragraph_format
         p_format.line_spacing = 1.5
@@ -149,25 +149,25 @@ def preprocess_markdown(content):
 
     # Очищаємо провідні косі риски у шляхах до зображень та вилучаємо alt text для уникнення подвійних підписів
     content = re.sub(r'!\[.*?\]\((?:/+|)(.*?)\)', r'![](\1)', content)
-    
+
     # Заголовки розділів (#) робимо великими літерами за вимогами ДСТУ
     def uppercase_headers(match):
         return f"# {match.group(1).upper()}"
     content = re.sub(r'^#\s+(.+)$', uppercase_headers, content, flags=re.MULTILINE)
-    
+
     # Вилучаємо номери формул і переформатовуємо їх під пост-процесор
     def replace_equation(match):
         formula_content = match.group(1).strip()
-        
+
         # Номер формули може бути в групі 2 (якщо зовні) або всередині блоку
         eq_num = match.group(2) if len(match.groups()) >= 2 and match.group(2) else None
-        
+
         if not eq_num:
             num_match = re.search(r'\(\s*(\d+\.\d+|\d+)\s*\)', formula_content)
             eq_num = num_match.group(0) if num_match else ""
         else:
             eq_num = eq_num.strip()
-            
+
         formula_clean = re.sub(r'\\qquad.*$', '', formula_content).strip()
         formula_clean = re.sub(r'\\eqno.*$', '', formula_clean).strip()
         if eq_num:
@@ -175,12 +175,12 @@ def preprocess_markdown(content):
             # Видаляємо можливі \qquad або \eqno в кінці формули
             formula_clean = re.sub(r'\\qquad\s*$', '', formula_clean).strip()
             formula_clean = re.sub(r'\\eqno\s*$', '', formula_clean).strip()
-            
+
         if eq_num:
             return f"\n\n$${formula_clean}$$\n\n[EQNO: {eq_num}]\n\n"
         else:
             return f"\n\n$${formula_clean}$$\n\n"
-            
+
     content = re.sub(r'\$\$(.*?)\$\$(?:\s*(\(\s*\d+(?:\.\d+)*\s*\)))?', replace_equation, content, flags=re.DOTALL)
     return content
 
@@ -188,7 +188,7 @@ def post_process_docx(docx_path):
     """Пост-обробка згенерованого Word файлу за допомогою python-docx."""
     logger.info("Запуск пост-процесора для налаштування стилів за ДСТУ...")
     doc = Document(docx_path)
-    
+
     # Налаштування полів сторінки
     for section in doc.sections:
         section.top_margin = Cm(2.0)      # 20 мм
@@ -270,7 +270,7 @@ def post_process_docx(docx_path):
             num_match = re.search(r'\[EQNO:\s*(\(\d+\.\d+\))\s*\]', p.text)
             if num_match:
                 eq_num = num_match.group(1)
-                
+
                 # Шукаємо найближчий попередній параграф з математикою
                 eq_p = None
                 for offset in [1, 2]:
@@ -279,7 +279,7 @@ def post_process_docx(docx_path):
                         if find_math_element(cand) is not None:
                             eq_p = cand
                             break
-                            
+
                 if eq_p is not None:
                     p_el = eq_p._p
                     # Вилучаємо вкладений oMathPara і переміщуємо oMath безпосередньо під w:p
@@ -290,7 +290,7 @@ def post_process_docx(docx_path):
                             idx = p_el.index(math_para)
                             p_el.remove(math_para)
                             p_el.insert(idx, math)
-                    
+
                     # Додаємо табуляцію на початку
                     r_el = OxmlElement('w:r')
                     tab_el = OxmlElement('w:tab')
@@ -301,13 +301,13 @@ def post_process_docx(docx_path):
                         p_el.insert(idx + 1, r_el)
                     else:
                         p_el.insert(0, r_el)
-                        
+
                     # Додаємо табуляцію та номер формули наприкінці
                     r = eq_p.add_run('\t' + eq_num)
                     r.font.name = "Times New Roman"
                     r.font.size = Pt(14)
                     r.font.color.rgb = RGBColor(0, 0, 0)
-                    
+
                     # Налаштовуємо Tab Stops
                     eq_p.paragraph_format.tab_stops.add_tab_stop(Inches(3.35), alignment=WD_TAB_ALIGNMENT.CENTER)
                     eq_p.paragraph_format.tab_stops.add_tab_stop(Inches(6.70), alignment=WD_TAB_ALIGNMENT.RIGHT)
@@ -316,7 +316,7 @@ def post_process_docx(docx_path):
                     eq_p.paragraph_format.space_before = Pt(6)
                     eq_p.paragraph_format.space_after = Pt(6)
                     eq_p.paragraph_format.line_spacing = 1.5
-                    
+
             # Видаляємо маркерний параграф
             p_el = p._p
             p_el.getparent().remove(p_el)
@@ -327,7 +327,7 @@ def post_process_docx(docx_path):
         if paragraph_has_image(p):
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             p.paragraph_format.first_line_indent = Inches(0)
-            
+
         text_clean = p.text.strip()
         if text_clean.startswith("де "):
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -358,7 +358,7 @@ def post_process_docx(docx_path):
                     for run in cell_p.runs:
                         run.font.name = "Times New Roman"
                         run.font.size = Pt(12)
-                        
+
     # Автоматичне масштабування великих зображень
     logger.info("Масштабування зображень до стандартних розмірів...")
     max_width_emu = Cm(15.0)
@@ -368,25 +368,25 @@ def post_process_docx(docx_path):
         height = shape.height
         if not width or not height:
             continue
-        
+
         scale = 1.0
         if width > max_width_emu:
             scale = min(scale, max_width_emu / width)
         if height > max_height_emu:
             scale = min(scale, max_height_emu / height)
-            
+
         if scale < 1.0:
             old_w, old_h = shape.width, shape.height
             shape.width = int(width * scale)
             shape.height = int(height * scale)
             logger.info(f"Зображення масштабовано з {old_w}x{old_h} до {shape.width}x{shape.height} (EMU)")
-                        
+
     doc.save(docx_path)
     logger.info("Пост-обробка успішно завершена.")
 
 def compile_markdown_to_docx():
     logger.info("Початок компіляції дипломної роботи через Pandoc...")
-    
+
     # Автоматично генеруємо зображення структури каталогів перед початком
     try:
         logger.info("Автоматична генерація зображення структури каталогів...")
@@ -398,50 +398,53 @@ def compile_markdown_to_docx():
         generate_tree_image("docs/images/project_structure.png")
     except Exception as e:
         logger.warning(f"Не вдалося автоматично згенерувати зображення структури: {e}")
-        
+
     pandoc_bin = find_pandoc()
     if not pandoc_bin:
         logger.error("Pandoc не знайдено! Встановіть його за допомогою: winget install JohnMacFarlane.Pandoc")
         sys.exit(1)
-        
+
     logger.debug(f"Використовується виконуваний файл Pandoc: {pandoc_bin}")
-    
+
     # Об'єднуємо глави у великий Markdown
     combined_content = ""
     first_chapter = True
-    
+
     for file_path in CHAPTER_FILES:
         if not os.path.exists(file_path):
             logger.warning(f"Файл {file_path} не знайдено, пропуск.")
             continue
-            
+
         logger.debug(f"Зчитування {file_path}...")
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
-            
+
         if not first_chapter:
             combined_content += PAGE_BREAK
         else:
             first_chapter = False
-            
+
         combined_content += content + "\n\n"
-        
+
     # Препроцесинг контенту перед згортанням в Pandoc
     combined_content = preprocess_markdown(combined_content)
-    
+
     # Записуємо у тимчасовий файл
     with open(TEMP_MD, "w", encoding="utf-8") as f:
         f.write(combined_content)
-        
+
     try:
         # Компіляція через Pandoc
         logger.info("Запуск конвертації Markdown в DOCX через Pandoc...")
         cmd = [pandoc_bin, TEMP_MD, "-o", OUTPUT_DOCX]
         subprocess.run(cmd, check=True)
-        
+
         # Пост-обробка згенерованого файлу
         post_process_docx(OUTPUT_DOCX)
         logger.info(f"Скомпільовано успішно: {OUTPUT_DOCX}")
+        # Видаляємо тимчасовий файл
+        if os.path.exists(TEMP_MD):
+            os.remove(TEMP_MD)
     finally:
         # Видаляємо тимчасовий файл
         if os.path.exists(TEMP_MD):
